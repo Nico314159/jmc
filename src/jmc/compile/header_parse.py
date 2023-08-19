@@ -320,6 +320,10 @@ def __parse_header(header_str: str, file_name: str,
                 ])
 
             header.post_process.append(__uninstall)
+        # #nometa
+        elif directive_token.string == "nometa":
+            header.nometa = True
+
         else:
             raise HeaderSyntaxException(
                 f"Unrecognized directive '{directive_token.string}'", file_name, line, line_str)

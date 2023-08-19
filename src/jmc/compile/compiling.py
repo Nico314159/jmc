@@ -355,7 +355,7 @@ def build(datapack: DataPack, config: "Configuration", is_delete: bool, cert_con
         return output
 
 
-    if output_folder / "pack.mcmeta" not in header.statics:
+    if output_folder / "pack.mcmeta" not in header.statics and not header.nometa:
         with (output_folder / "pack.mcmeta").open("w+", encoding="utf-8") as file:
             mcmeta_body = {
                 "pack": {
