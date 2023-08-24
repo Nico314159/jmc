@@ -1,6 +1,8 @@
 """Module handling variable operation"""
 from typing import TYPE_CHECKING
 
+from jmc.compile.utils import convention_jmc_to_mc
+
 from .jmc_function import JMCFunction, FuncType
 from ..datapack import DataPack
 from ..exception import JMCSyntaxException
@@ -15,7 +17,7 @@ VAR_OPERATION_COMMANDS = JMCFunction.get_subclasses(
 
 
 def variable_operation(
-        tokens: list[Token], tokenizer: Tokenizer, datapack: DataPack, is_execute: bool, FuncContent: type["FuncContent"], first_arguments: set[str]) -> str:
+        tokens: list[Token], tokenizer: Tokenizer, datapack: DataPack, is_execute: bool, FuncContent: type["FuncContent"], first_arguments: set[str], is_in_chain: bool = False) -> str:
     """
     Parse statement for variable operation including custom JMC command that return and integer to be stored in scoreboard value
 
@@ -23,6 +25,7 @@ def variable_operation(
     :param tokenizer: Tokenizer
     :param datapack: Datapack object
     :param is_execute: Whether the statement/function is in `/execute`
+    :param is_in_chain: Whether it's in `$a = $b = $c` and is not the most left handed in the chain
     :return: Full minecraft command
     """
     if tokens[0].string.startswith(DataPack.VARIABLE_SIGN):
@@ -91,6 +94,16 @@ def variable_operation(
                 f"Unexpected token ('{tokens[3].string}') after '{tokens[2].string}'", tokens[3], tokenizer, suggestion="Probably missing semicolon.")
         return f"scoreboard players set {tokens[0].string} {objective_name} {'1' if tokens[2].string == 'true' else '0'}"
 
+    if operator == "??=" and len(
+            tokens) > 2 and tokens[2].token_type == TokenType.KEYWORD and tokens[2].string in {"true", "false"}:
+        if len(tokens) > 3:
+            raise JMCSyntaxException(
+                f"Unexpected token ('{tokens[3].string}') after '{tokens[2].string}'", tokens[3], tokenizer, suggestion="Probably missing semicolon.")
+        if tokens[2].string == 'true':
+            return f"execute unless score {tokens[0].string} {objective_name} = {tokens[0].string} {objective_name} run scoreboard players set {tokens[0].string} {objective_name} 1"
+        elif tokens[2].string == 'false':
+            return f"scoreboard players add {tokens[0].string} {objective_name} 0"
+
     if operator in {"++", "--"}:
         if len(tokens) > 2:
             raise JMCSyntaxException(
@@ -116,10 +129,7 @@ def variable_operation(
         if len(tokens) == 2:
             raise JMCSyntaxException(
                 f"Expected keyword after operator{tokens[1].string} (got nothing)", tokens[1], tokenizer, suggestion="Expected integer or variable or target selector")
-        # if tokens[2].token_type == TokenType.OPERATOR and len(
-        #         tokens) > 3 and tokens[3].token_type == TokenType.KEYWORD:
-        #     tokens[2] = tokenizer.merge_tokens(tokens[2:4])
-        #     del tokens[3]
+
         if tokens[2].token_type != TokenType.KEYWORD:
             raise JMCSyntaxException(
                 f"Expected keyword after operator{tokens[1].string} (got {tokens[2].token_type.value})", tokens[2], tokenizer, suggestion="Expected integer or variable or target selector")
@@ -140,17 +150,29 @@ def variable_operation(
             return VAR_OPERATION_COMMANDS[tokens[2].string](
                 tokens[3], datapack, tokenizer, var=tokens[0].string, is_execute=is_execute).call()
 
+        if (len(tokens) == 4 and operator ==
+                "=" and tokens[2].token_type == TokenType.KEYWORD and tokens[3].token_type == TokenType.PAREN_ROUND):
+            func = convention_jmc_to_mc(tokens[2], tokenizer)
+            datapack.functions_called[func] = tokens[2], tokenizer
+            return f"""execute store result score {tokens[0].string} {objective_name} run function {
+                datapack.namespace}:{func}"""
+
         left_token = tokens[0]
         right_token = tokens[2]
         # left_token.string operator right_token.string
 
         if len(tokens) > 3:
-            if (is_obj_selector(tokens, 2)):  # If rvar is obj:selector
-                right_token = merge_obj_selector(
-                    tokens, tokenizer, datapack, 2)
+            if operator in {"=", "=="}:
+                return f"""execute store result score {left_token.string} {objective_name} run {variable_operation(tokens[2:], tokenizer, datapack, is_execute, FuncContent, first_arguments)}""".replace(
+                    "run execute store", "store")
             else:
                 raise JMCSyntaxException(
                     f"Unexpected token ('{tokens[3].string}') after variable/integer ('{tokens[2].string}')", tokens[3], tokenizer, suggestion="Probably missing semicolon.")
+
+        if len(tokens) > 3:
+            if (is_obj_selector(tokens, 2)):  # If rvar is obj:selector
+                right_token = merge_obj_selector(
+                    tokens, tokenizer, datapack, 2)
 
         scoreboard_player = find_scoreboard_player_type(
             right_token, tokenizer, allow_integer=False)
